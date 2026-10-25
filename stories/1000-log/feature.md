@@ -1,5 +1,9 @@
 # 1000: log
 
+The log retains individual transfers of amounts between credit and debit accounts.
+
+The log will persist anything. The transfers can be anything. Only summaries are strict about what is processible.
+
 ## Acceptance Criteria
 
 - [ ] When page is filled with these transfer values then there is no error:
