@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Keeper</title>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --negative: #dc2626;
+      --positive: #16a34a;
+      --input-bg: #fff;
+      --input-border: #d1d5db;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a1a;
+        --fg: #e5e7eb;
+        --muted: #9ca3af;
+        --border: #374151;
+        --negative: #f87171;
+        --positive: #4ade80;
+        --input-bg: #2a2a2a;
+        --input-border: #4b5563;
+      }
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      padding: 2rem;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.875rem;
+      margin-bottom: 2rem;
+    }
+
+    h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 2rem;
+    }
+
+    th {
+      text-align: left;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 0.25rem 0.75rem;
+      vertical-align: top;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 0.375rem 0.5rem;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      background: var(--input-bg);
+      color: var(--fg);
+      font-size: 0.875rem;
+      font-family: inherit;
+    }
+
+    input[type="text"]:focus {
+      outline: none;
+      border-color: #3b82f6;
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+    }
+
+    .amount-input {
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      width: 140px;
+    }
+
+    .balance {
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+      padding-right: 0.75rem;
+    }
+
+    .balance.negative { color: var(--negative); }
+    .balance.positive { color: var(--positive); }
+
+    .actions {
+      text-align: center;
+      padding: 0.25rem 0.75rem;
+    }
+
+    button {
+      padding: 0.25rem 0.5rem;
+      border: none;
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      border-radius: 4px;
+    }
+
+    button:hover { color: var(--negative); }
+
+    .summary-table td:first-child {
+      font-weight: 500;
+    }
+
+    .empty-state {
+      color: var(--muted);
+      font-size: 0.875rem;
+      padding: 1rem 0.75rem;
+    }
+
+    .export-btn {
+      display: inline-block;
+      padding: 0.375rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--input-bg);
+      color: var(--muted);
+      font-size: 0.75rem;
+      cursor: pointer;
+      margin-bottom: 1rem;
+    }
+
+    .export-btn:hover {
+      color: var(--fg);
+      border-color: var(--fg);
+    }
+  </style>
+</head>
+<body>
+  <h1>Keeper</h1>
+  <p class="subtitle">Double-entry ledger. Real-time summaries.</p>
+
+  <h2>Transaction Log</h2>
+  <table id="log-table">
+    <thead>
+      <tr>
+        <th style="width: 30%">Credit</th>
+        <th style="width: 30%">Debit</th>
+        <th style="width: 20%">Amount</th>
+        <th style="width: 20%"></th>
+      </tr>
+    </thead>
+    <tbody id="log-body"></tbody>
+  </table>
+
+  <h2>Balance Summary</h2>
+  <table id="summary-table">
+    <thead>
+      <tr>
+        <th>Account</th>
+        <th style="text-align: right">Balance</th>
+      </tr>
+    </thead>
+    <tbody id="summary-body"></tbody>
+  </table>
+
+  <script>
+    // --- Amount parsing ---
+    // Formats: "$ 1,000.00", "( $ 1.00 )", "40 hours", "( 40 hours )"
+    // Returns { prefix, sign, significand, characteristic, suffix }
+    function parseAmount(str) {
+      str = str.trim();
+      if (!str) return null;
+
+      let negative = false;
+      let prefix = '';
+      let suffix = '';
+
+      // Check for parentheses (negative)
+      if (str.startsWith('(') && str.endsWith(')')) {
+        negative = true;
+        str = str.slice(1, -1).trim();
+      }
+
+      // Extract prefix (letters/digits before the number)
+      const prefixMatch = str.match(/^([A-Za-z$€£¥]+)\s*/);
+      if (prefixMatch) prefix = prefixMatch[1];
+
+      // Extract suffix (letters after the number)
+      const numMatch = str.match(/(\d[\d,.]*)\s*(.*)$/);
+      if (!numMatch) return null;
+
+      const rawNumber = numMatch[1].replace(/,/g, '');
+      const value = parseFloat(rawNumber);
+      if (isNaN(value)) return null;
+
+      // Characteristic = number of decimal places
+      const decimalPart = rawNumber.split('.')[1];
+      const characteristic = decimalPart ? decimalPart.length : 0;
+
+      // Significand = integer representation (cents for money, raw for others)
+      const significand = value * Math.pow(10, characteristic);
+
+      return { prefix, sign: negative ? 'negative' : 'positive', significand, characteristic, suffix };
+    }
+
+    function formatAmount(parsed) {
+      if (!parsed) return '';
+      const value = parsed.significand / Math.pow(10, parsed.characteristic);
+      const formatted = value.toLocaleString('en-US', {
+        minimumFractionDigits: parsed.characteristic,
+        maximumFractionDigits: parsed.characteristic,
+      });
+      const sign = parsed.sign === 'negative' ? '( ' : '';
+      const close = parsed.sign === 'negative' ? ' )' : '';
+      return `${sign}${parsed.prefix}${formatted}${close}`;
+    }
+
+    // --- Balance computation ---
+    function computeBalances(transactions) {
+      const balances = {};
+      for (const tx of transactions) {
+        const parsed = parseAmount(tx.amount);
+        if (!parsed) continue;
+
+        const value = parsed.sign === 'negative'
+          ? -parsed.significand
+          : parsed.significand;
+
+        // Credit accounts are subtracted, debit accounts are added
+        balances[tx.credit] = (balances[tx.credit] || 0) - value;
+        balances[tx.debit] = (balances[tx.debit] || 0) + value;
+      }
+      return balances;
+    }
+
+    // --- Persistence ---
+    function loadTransactions() {
+      try {
+        const data = localStorage.getItem('keeper_transactions');
+        return data ? JSON.parse(data) : [];
+      } catch { return []; }
+    }
+
+    function saveTransactions(transactions) {
+      localStorage.setItem('keeper_transactions', JSON.stringify(transactions));
+    }
+
+    // --- Rendering ---
+    function renderLog(transactions) {
+      const tbody = document.getElementById('log-body');
+      tbody.innerHTML = '';
+
+      transactions.forEach((tx, i) => {
+        const tr = document.createElement('tr');
+
+        const creditTd = document.createElement('td');
+        const creditInput = document.createElement('input');
+        creditInput.type = 'text';
+        creditInput.value = tx.credit;
+        creditInput.placeholder = 'account';
+        creditInput.dataset.index = i;
+        creditInput.addEventListener('input', () => {
+          transactions[i].credit = creditInput.value;
+          saveTransactions(transactions);
+          renderSummary(computeBalances(transactions));
+        });
+        creditTd.appendChild(creditInput);
+
+        const debitTd = document.createElement('td');
+        const debitInput = document.createElement('input');
+        debitInput.type = 'text';
+        debitInput.value = tx.debit;
+        debitInput.placeholder = 'account';
+        debitInput.dataset.index = i;
+        debitInput.addEventListener('input', () => {
+          transactions[i].debit = debitInput.value;
+          saveTransactions(transactions);
+          renderSummary(computeBalances(transactions));
+        });
+        debitTd.appendChild(debitInput);
+
+        const amountTd = document.createElement('td');
+        const amountInput = document.createElement('input');
+        amountInput.type = 'text';
+        amountInput.value = tx.amount;
+        amountInput.className = 'amount-input';
+        amountInput.placeholder = '$ 0.00';
+        amountInput.dataset.index = i;
+        amountInput.addEventListener('input', () => {
+          transactions[i].amount = amountInput.value;
+          saveTransactions(transactions);
+          renderSummary(computeBalances(transactions));
+        });
+        amountTd.appendChild(amountInput);
+
+        const actionsTd = document.createElement('td');
+        actionsTd.className = 'actions';
+        const deleteBtn = document.createElement('button');
+        deleteBtn.textContent = '×';
+        deleteBtn.title = 'Remove';
+        deleteBtn.addEventListener('click', () => {
+          transactions.splice(i, 1);
+          saveTransactions(transactions);
+          renderLog(transactions);
+          renderSummary(computeBalances(transactions));
+        });
+        actionsTd.appendChild(deleteBtn);
+
+        tr.appendChild(creditTd);
+        tr.appendChild(debitTd);
+        tr.appendChild(amountTd);
+        tr.appendChild(actionsTd);
+        tbody.appendChild(tr);
+      });
+
+      // Add row button
+      const addRow = document.createElement('tr');
+      const addTd = document.createElement('td');
+      addTd.colSpan = 4;
+      const addBtn = document.createElement('button');
+      addBtn.textContent = '+ Add transaction';
+      addBtn.style.cssText = 'width: 100%; padding: 0.5rem; color: var(--muted); border: 1px dashed var(--border); border-radius: 4px;';
+      addBtn.addEventListener('click', () => {
+        transactions.push({ credit: '', debit: '', amount: '' });
+        saveTransactions(transactions);
+        renderLog(transactions);
+        renderSummary(computeBalances(transactions));
+      });
+      addTd.appendChild(addBtn);
+      addRow.appendChild(addTd);
+      tbody.appendChild(addRow);
+    }
+
+    function renderSummary(balances) {
+      const tbody = document.getElementById('summary-body');
+      tbody.innerHTML = '';
+
+      const entries = Object.entries(balances).sort((a, b) => a[0].localeCompare(b[0]));
+
+      if (entries.length === 0) {
+        const tr = document.createElement('tr');
+        const td = document.createElement('td');
+        td.colSpan = 2;
+        td.className = 'empty-state';
+        td.textContent = 'No transactions yet.';
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+      }
+
+      entries.forEach(([account, balance]) => {
+        const tr = document.createElement('tr');
+
+        const nameTd = document.createElement('td');
+        nameTd.textContent = account;
+
+        const balTd = document.createElement('td');
+        balTd.className = 'balance';
+        if (balance < 0) balTd.classList.add('negative');
+        else if (balance > 0) balTd.classList.add('positive');
+
+        const value = Math.abs(balance) / 1;
+        balTd.textContent = balance < 0
+          ? `( $${value.toLocaleString('en-US', { minimumFractionDigits: 2 })} )`
+          : `$${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+
+        tr.appendChild(nameTd);
+        tr.appendChild(balTd);
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderAll() {
+      const transactions = loadTransactions();
+      renderLog(transactions);
+      const balances = computeBalances(transactions);
+      renderSummary(balances);
+    }
+
+    // --- Init ---
+    renderAll();
+  </script>
+</body>
+</html>
